@@ -2,6 +2,9 @@ import { API, DynamicPlatformPlugin, Logger, PlatformAccessory, PlatformConfig, 
 
 import { PLATFORM_NAME, PLUGIN_NAME } from './settings';
 import { AqaraSwitchPlatformAccessory } from './aqara-switch-platform-accessory';
+import { findSerialPort } from './helpers/find-serial-port';
+import { Controller } from 'zigbee-herdsman';
+import path from 'path';
 
 /**
  * HomebridgePlatform
@@ -49,8 +52,56 @@ export class ExampleHomebridgePlatform implements DynamicPlatformPlugin {
    * Accessories must only be registered once, previously created accessories
    * must not be registered again to prevent "duplicate UUID" errors.
    */
-  discoverDevices() {
+  async discoverDevices() {
     this.log.debug('Discovering devices');
+
+    this.log.info('SERIAL PLAYGROUND');
+    const port = this.config.port || (await findSerialPort());
+    this.log.info('Port:', port);
+
+    // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+    // @ts-ignore
+    const controller = new Controller({
+      // databasePath: this.config.database || '/var/lib/homebridge/zigbee.db',
+      databasePath: this.config.database || path.join(this.api.user.storagePath(), './zigBee.db'),
+    });
+    await controller.start();
+    controller.on('start', () => {
+      this.log.info('Controller ON start(ed)');
+    });
+    controller.on('started', () => {
+      this.log.info('Controller ON start(ed)');
+    });
+    controller.on('message', (data) => {
+      this.log.info('Controller ON message', JSON.stringify(data));
+    });
+    controller.on('deviceJoined', (data) => {
+      this.log.info('Controller ON deviceJoined', JSON.stringify(data));
+    });
+    controller.on('deviceInterview', (data) => {
+      this.log.info('Controller ON deviceInterview', JSON.stringify(data));
+    });
+    controller.on('deviceAnnounce', (data) => {
+      this.log.info('Controller ON deviceAnnounce', JSON.stringify(data));
+    });
+    controller.on('deviceNetworkAddressChanged', (data) => {
+      this.log.info('Controller ON deviceNetworkAddressChanged', JSON.stringify(data));
+    });
+    controller.on('deviceLeave', (data) => {
+      this.log.info('Controller ON deviceLeave', JSON.stringify(data));
+    });
+    controller.on('permitJoinChanged', (data) => {
+      this.log.info('Controller ON permitJoinChanged', JSON.stringify(data));
+    });
+    controller.on('adapterDisconnected', (data) => {
+      this.log.info('Controller ON adapterDisconnected', JSON.stringify(data));
+    });
+
+    // this.log.info('getDevices:', controller.getDevices());
+    // this.log.info('getPermitJoin:', controller.getPermitJoin());
+    // this.log.info('getNetworkParameters:', controller.getNetworkParameters());
+
+
     // EXAMPLE ONLY
     // A real plugin you would discover accessories from the local network, cloud services
     // or a user-defined array in the platform config.
