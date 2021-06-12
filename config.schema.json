@@ -1,5 +1,5 @@
 {
-  "pluginAlias": "ExampleHomebridgePlugin",
+  "pluginAlias": "HomebridgeZigbeeCuriosityPlugin",
   "pluginType": "platform",
   "singular": true,
   "schema": {
