@@ -2,18 +2,17 @@ import { API, DynamicPlatformPlugin, Logger, PlatformAccessory, PlatformConfig, 
 
 import { PLATFORM_NAME, PLUGIN_NAME } from './settings';
 import { AqaraSwitchPlatformAccessory } from './aqara-switch-platform-accessory';
-import { findSerialPort } from './helpers/find-serial-port';
-import { Controller } from 'zigbee-herdsman';
-import path from 'path';
+import { ZigbeeController } from './zigbee';
 
 /**
  * HomebridgePlatform
  * This class is the main constructor for your plugin, this is where you should
  * parse the user config and discover/register accessories with Homebridge.
  */
-export class ExampleHomebridgePlatform implements DynamicPlatformPlugin {
+export class CuriosityHomebridgePlatform implements DynamicPlatformPlugin {
   public readonly Service: typeof Service = this.api.hap.Service;
   public readonly Characteristic: typeof Characteristic = this.api.hap.Characteristic;
+  public readonly zigbeeController: ZigbeeController;
 
   // this is used to track restored cached accessories
   public readonly accessories: PlatformAccessory[] = [];
@@ -25,12 +24,17 @@ export class ExampleHomebridgePlatform implements DynamicPlatformPlugin {
   ) {
     this.log.debug('Finished initializing platform:', this.config.name);
 
+    this.zigbeeController = new ZigbeeController(log, config, api);
+
     // When this event is fired it means Homebridge has restored all cached accessories from disk.
     // Dynamic Platform plugins should only register new accessories after this event was fired,
     // in order to ensure they weren't added to homebridge already. This event can also be used
     // to start discovery of new accessories.
-    this.api.on('didFinishLaunching', () => {
-      log.debug('Executed didFinishLaunching callback');
+    this.api.on('didFinishLaunching', async () => {
+      this.log.debug('Starting Zigbee controller');
+      await this.zigbeeController.start();
+      this.log.debug('Zigbee controller started');
+      this.log.debug('Executed didFinishLaunching callback');
       // run the method to discover / register your devices as accessories
       this.discoverDevices();
     });
@@ -55,74 +59,15 @@ export class ExampleHomebridgePlatform implements DynamicPlatformPlugin {
   async discoverDevices() {
     this.log.debug('Discovering devices');
 
-    this.log.info('SERIAL PLAYGROUND');
-    const port = this.config.port || (await findSerialPort());
-    this.log.info('Port:', port);
-
-    // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-    // @ts-ignore
-    const controller = new Controller({
-      // databasePath: this.config.database || '/var/lib/homebridge/zigbee.db',
-      databasePath: this.config.database || path.join(this.api.user.storagePath(), './zigBee.db'),
-    });
-    await controller.start();
-    controller.on('start', () => {
-      this.log.info('Controller ON start(ed)');
-    });
-    controller.on('started', () => {
-      this.log.info('Controller ON start(ed)');
-    });
-    controller.on('message', (data) => {
-      this.log.info('Controller ON message', JSON.stringify(data));
-    });
-    controller.on('deviceJoined', (data) => {
-      this.log.info('Controller ON deviceJoined', JSON.stringify(data));
-    });
-    controller.on('deviceInterview', (data) => {
-      this.log.info('Controller ON deviceInterview', JSON.stringify(data));
-    });
-    controller.on('deviceAnnounce', (data) => {
-      this.log.info('Controller ON deviceAnnounce', JSON.stringify(data));
-    });
-    controller.on('deviceNetworkAddressChanged', (data) => {
-      this.log.info('Controller ON deviceNetworkAddressChanged', JSON.stringify(data));
-    });
-    controller.on('deviceLeave', (data) => {
-      this.log.info('Controller ON deviceLeave', JSON.stringify(data));
-    });
-    controller.on('permitJoinChanged', (data) => {
-      this.log.info('Controller ON permitJoinChanged', JSON.stringify(data));
-    });
-    controller.on('adapterDisconnected', (data) => {
-      this.log.info('Controller ON adapterDisconnected', JSON.stringify(data));
-    });
-
-    // this.log.info('getDevices:', controller.getDevices());
-    // this.log.info('getPermitJoin:', controller.getPermitJoin());
-    // this.log.info('getNetworkParameters:', controller.getNetworkParameters());
-
-
-    // EXAMPLE ONLY
-    // A real plugin you would discover accessories from the local network, cloud services
-    // or a user-defined array in the platform config.
-    const exampleDevices = [
-      {
-        exampleUniqueId: 'asd',
-        exampleDisplayName: 'Room 1',
-      },
-      {
-        exampleUniqueId: '12d',
-        exampleDisplayName: 'Room 2',
-      },
-    ];
+    const zigbeeDevices = await this.zigbeeController.controller.getDevicesByType('Router');
 
     // loop over the discovered devices and register each one if it has not already been registered
-    for (const device of exampleDevices) {
+    for (const device of zigbeeDevices) {
 
       // generate a unique id for the accessory this should be generated from
       // something globally unique, but constant, for example, the device serial
       // number or MAC address
-      const uuid = this.api.hap.uuid.generate(device.exampleUniqueId);
+      const uuid = this.api.hap.uuid.generate(device.ieeeAddr);
 
       // see if an accessory with the same uuid has already been registered and restored from
       // the cached devices we stored in the `configureAccessory` method above
@@ -146,14 +91,19 @@ export class ExampleHomebridgePlatform implements DynamicPlatformPlugin {
         // this.log.info('Removing existing accessory from cache:', existingAccessory.displayName);
       } else {
         // the accessory does not yet exist, so we need to create it
-        this.log.info('Adding new accessory:', device.exampleDisplayName);
+        this.log.info('Adding new accessory:', device.modelID);
 
         // create a new accessory
-        const accessory = new this.api.platformAccessory(device.exampleDisplayName, uuid);
+        const accessory = new this.api.platformAccessory(device.modelID, uuid);
 
         // store a copy of the device object in the `accessory.context`
         // the `context` property can be used to store any data about the accessory you may need
-        accessory.context.device = device;
+        accessory.context.device = {
+          manufacturerName: device.manufacturerName,
+          modelID: device.modelID,
+          ieeeAddr: device.ieeeAddr,
+          networkAddress: device.networkAddress,
+        };
 
         // create the accessory handler for the newly create accessory
         // this is imported from `platformAccessory.ts`

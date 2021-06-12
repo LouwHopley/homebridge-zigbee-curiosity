@@ -1,6 +1,6 @@
 import { Service, PlatformAccessory, CharacteristicValue } from 'homebridge';
 
-import { ExampleHomebridgePlatform } from './platform';
+import { CuriosityHomebridgePlatform } from './platform';
 
 /**
  * Platform Accessory
@@ -10,24 +10,15 @@ import { ExampleHomebridgePlatform } from './platform';
 export class AqaraSwitchPlatformAccessory {
   private service: Service;
 
-  /**
-   * These are just used to create a working example
-   * You should implement your own code to track the state of your accessory
-   */
-  private exampleStates = {
-    On: false,
-  };
-
   constructor(
-    private readonly platform: ExampleHomebridgePlatform,
+    private readonly platform: CuriosityHomebridgePlatform,
     private readonly accessory: PlatformAccessory,
   ) {
-
     // set accessory information
     this.accessory.getService(this.platform.Service.AccessoryInformation)!
       .setCharacteristic(this.platform.Characteristic.Manufacturer, 'Aqara')
-      .setCharacteristic(this.platform.Characteristic.Model, 'Wall switch')
-      .setCharacteristic(this.platform.Characteristic.SerialNumber, 'Default-Serial');
+      .setCharacteristic(this.platform.Characteristic.Model, accessory.context.device.modelID)
+      .setCharacteristic(this.platform.Characteristic.SerialNumber, accessory.context.device.modelID);
 
     // get the LightBulb service if it exists, otherwise create a new LightBulb service
     // you can create multiple services for each accessory
@@ -36,16 +27,27 @@ export class AqaraSwitchPlatformAccessory {
     // this.service = this.accessory.getService(this.platform.Service.Switch) || this.accessory.addService(this.platform.Service.Switch);
 
     // set the service name, this is what is displayed as the default name on the Home app
-    // in this example we are using the name we stored in the `accessory.context` in the `discoverDevices` method.
-    this.service.setCharacteristic(this.platform.Characteristic.Name, accessory.context.device.exampleDisplayName);
+    this.service.setCharacteristic(this.platform.Characteristic.Name, accessory.displayName);
 
     // each service must implement at-minimum the "required characteristics" for the given service type
     // see https://developers.homebridge.io/#/service/Lightbulb
 
     // register handlers for the On/Off Characteristic
     this.service.getCharacteristic(this.platform.Characteristic.On)
-      .onSet(this.handleOnSet.bind(this))                // SET - bind to the `setOn` method below
-      .onGet(this.handleOnGet.bind(this));               // GET - bind to the `getOn` method below
+      .onSet(this.handleOnSet.bind(this))   // SET - bind to the `setOn` method below
+      .onGet(this.handleOnGet.bind(this));  // GET - bind to the `getOn` method below
+
+    this.platform.zigbeeController.onAttributeReport((payload) => {
+      if (payload.device._ieeeAddr === this.accessory.context.device.ieeeAddr) {
+        if ('onOff' in payload.data && '61440' in payload.data) { // Not sure, but "61440":59891968 is always present in the correct state
+          this.platform.log.info(`State report: ${this.accessory.displayName} ${payload.data.onOff}`);
+          const on = payload.data.onOff === 1;
+          this.service.getCharacteristic(this.platform.Characteristic.On)
+            .setValue(on);
+          // TODO: set the state of this accessory, but first monitor if an infinite loop will be created
+        }
+      }
+    });
   }
 
   /**
@@ -53,10 +55,38 @@ export class AqaraSwitchPlatformAccessory {
    * These are sent when the user changes the state of an accessory, for example, turning on a Light bulb.
    */
   async handleOnSet(value: CharacteristicValue) {
+    if (this.service.getCharacteristic(this.platform.Characteristic.On).value === value) {
+      this.platform.log.debug('handleOnSet value already matching. Doing nothing.');
+      return;
+    }
     // implement your own code to turn your device on/off
-    this.exampleStates.On = value as boolean;
+    this.platform.log.debug(`Setting '${this.accessory.displayName}' to ${value ? 'ON' : 'OFF'}`);
 
-    this.platform.log.debug(`Setting '${this.accessory.displayName}' light switch to -> ${value}`);
+    // https://github.com/Koenkk/zigbee-herdsman/blob/master/src/controller/model/device.ts#L53
+    const device = this.platform.zigbeeController.controller.getDeviceByIeeeAddr(this.accessory.context.device.ieeeAddr);
+    // this.platform.log.debug('Device:', device);
+
+    const endpoint = device.endpoints[0];
+    // this.platform.log.debug('Endpoint:', endpoint);
+
+    // TODO: this part still needs to be figured out
+    const clusterKey = 'aqaraOpple';
+    const payload = {
+      0x000A: {
+        value: value ? 1 : 0,
+        // type: 0x20,
+        onOff: value ? 1 : 0,
+        type: 'write',
+      },
+    };
+    // const options = {
+    //   manufacturerCode: 0x115F, //herdsman.Zcl.ManufacturerCode.LUMI_UNITED_TECH,
+    //   disableDefaultResponse: true,
+    // };
+    this.platform.log.debug('Attempting write with payload:\n', payload);
+
+    await endpoint.write(clusterKey, payload);
+    // await endpoint.write(clusterKey, payload, options);
   }
 
   /**
@@ -73,14 +103,7 @@ export class AqaraSwitchPlatformAccessory {
    * this.service.updateCharacteristic(this.platform.Characteristic.On, true)
    */
   async handleOnGet(): Promise<CharacteristicValue> {
-    // implement your own code to check if the device is on
-    const isOn = this.exampleStates.On;
-
-    this.platform.log.debug('Getting light switch state ->', isOn);
-
-    // if you need to return an error to show the device as "Not Responding" in the Home app:
-    // throw new this.platform.api.hap.HapStatusError(this.platform.api.hap.HAPStatus.SERVICE_COMMUNICATION_FAILURE);
-
-    return isOn;
+    this.platform.log.debug(`Getting state of '${this.accessory.displayName}'`);
+    return this.service.getCharacteristic(this.platform.Characteristic.On).value || false;
   }
 }
